@@ -40,7 +40,7 @@
                 </div>
 
                 <!-- Table -->
-                <div class="table-wrapper">
+                <div class="table-wrapper" id="tableWrapper">
                     <div class="table-scroll">
                         <table id="mainTable">
                             <thead>
@@ -54,12 +54,14 @@
                                     <th></th>
                                 </tr>
                             </thead>
-                            <tbody id="tableBody">
-                                <tr class="loading-row"><td colspan="7"><div class="spinner"></div></td></tr>
-                            </tbody>
+                            <tbody id="tableBody"></tbody>
                         </table>
                     </div>
                     <div class="pagination" id="paginationBar"></div>
+                </div>
+                <div class="empty-state" id="tableEmptyState" style="display:none">
+                    <div class="spinner" id="tableEmptySpinner"></div>
+                    <p id="tableEmptyText"></p>
                 </div>
             </div>
         </div>

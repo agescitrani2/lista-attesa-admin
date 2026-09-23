@@ -215,7 +215,7 @@ body {
     overflow: hidden;
 }
 
-.table-scroll { overflow-x: auto; }
+.table-scroll { overflow-x: auto; overflow-y: hidden; }
 
 table {
     width: 100%;
@@ -255,17 +255,17 @@ tbody td {
 .td-email { color: #555; font-size: 0.8rem; }
 
 .priority-badge {
-    display: inline-block;
-    margin-left: 8px;
-    padding: 2px 8px;
+    display: block;
+    width: fit-content;
+    margin-top: 4px;
+    padding: 1px 7px;
     border-radius: 20px;
-    font-size: 0.68rem;
+    font-size: 0.6rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     background: #FFF3D6;
     color: #A66A00;
-    vertical-align: middle;
 }
 
 /* ---- Avvisi (note/anomalie) ---- */
@@ -305,8 +305,6 @@ tbody td {
     padding: 60px 20px;
     color: #aaa;
 }
-
-.empty-state .empty-icon { font-size: 3rem; margin-bottom: 12px; }
 
 /* ---- Modal ---- */
 .modal-overlay {
@@ -513,8 +511,6 @@ tbody td {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
-
-.loading-row td { text-align: center; padding: 40px; }
 
 /* ---- Pagination ---- */
 .pagination {

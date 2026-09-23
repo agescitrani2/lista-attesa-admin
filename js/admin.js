@@ -57,8 +57,7 @@ function showPage(name) {
 
 // ---- Listener realtime Firestore ----
 function startRealtimeListener() {
-    document.getElementById('tableBody').innerHTML =
-        '<tr class="loading-row"><td colspan="7"><div class="spinner"></div></td></tr>';
+    showTableState('loading');
 
     unsubscribe = db.collection('lista_attesa')
         .orderBy('created_at', 'desc')
@@ -191,6 +190,25 @@ function populateYearFilter() {
     });
 }
 
+// ---- Mostra/nasconde la tabella e lo stato vuoto (evita scroll inutili su mobile) ----
+function showTableState(state, message) {
+    const wrapper = document.getElementById('tableWrapper');
+    const empty   = document.getElementById('tableEmptyState');
+    const spinner = document.getElementById('tableEmptySpinner');
+    const text    = document.getElementById('tableEmptyText');
+
+    if (state === 'table') {
+        wrapper.style.display = '';
+        empty.style.display   = 'none';
+        return;
+    }
+
+    wrapper.style.display = 'none';
+    empty.style.display   = 'block';
+    spinner.style.display = state === 'loading' ? 'block' : 'none';
+    text.textContent      = message || '';
+}
+
 // ---- Render tabella ----
 function renderTable() {
     const tbody = document.getElementById('tableBody');
@@ -198,26 +216,18 @@ function renderTable() {
     const slice = filteredData.slice(start, start + PAGE_SIZE);
 
     if (!filtersActive) {
-        tbody.innerHTML = `
-            <tr><td colspan="7">
-                <div class="empty-state">
-                    <p>Seleziona un anno o digita il nome del ragazzo per visualizzare i dati</p>
-                </div>
-            </td></tr>`;
+        showTableState('empty', 'Seleziona un anno o digita il nome del ragazzo per visualizzare i dati');
         document.getElementById('paginationBar').innerHTML = '';
         return;
     }
 
     if (filteredData.length === 0) {
-        tbody.innerHTML = `
-            <tr><td colspan="7">
-                <div class="empty-state">
-                    <p>Nessuna iscrizione trovata</p>
-                </div>
-            </td></tr>`;
-        renderPagination();
+        showTableState('empty', 'Nessuna iscrizione trovata');
+        document.getElementById('paginationBar').innerHTML = '';
         return;
     }
+
+    showTableState('table');
 
     tbody.innerHTML = slice.map(r => {
         const b = r.bambino  || {};
