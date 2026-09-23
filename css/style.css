@@ -306,6 +306,8 @@ tbody td {
     color: #aaa;
 }
 
+.table-empty-mobile-msg { display: none; }
+
 /* ---- Modal ---- */
 .modal-overlay {
     display: none;
@@ -512,6 +514,8 @@ tbody td {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.loading-row td { text-align: center; padding: 40px; }
+
 /* ---- Pagination ---- */
 .pagination {
     display: flex;
@@ -571,6 +575,8 @@ tbody td {
     .detail-grid { grid-template-columns: 1fr; }
     .toolbar { flex-direction: column; align-items: stretch; }
     .search-box { min-width: unset; }
+    .table-wrapper.table-empty { display: none; }
+    .table-wrapper.table-empty + .table-empty-mobile-msg { display: block; }
 }
 
 @media (max-width: 480px) {

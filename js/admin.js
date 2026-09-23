@@ -57,7 +57,9 @@ function showPage(name) {
 
 // ---- Listener realtime Firestore ----
 function startRealtimeListener() {
-    showTableState('loading');
+    document.getElementById('tableWrapper').classList.remove('table-empty');
+    document.getElementById('tableBody').innerHTML =
+        '<tr class="loading-row"><td colspan="7"><div class="spinner"></div></td></tr>';
 
     unsubscribe = db.collection('lista_attesa')
         .orderBy('created_at', 'desc')
@@ -190,23 +192,18 @@ function populateYearFilter() {
     });
 }
 
-// ---- Mostra/nasconde la tabella e lo stato vuoto (evita scroll inutili su mobile) ----
-function showTableState(state, message) {
-    const wrapper = document.getElementById('tableWrapper');
-    const empty   = document.getElementById('tableEmptyState');
-    const spinner = document.getElementById('tableEmptySpinner');
-    const text    = document.getElementById('tableEmptyText');
-
-    if (state === 'table') {
-        wrapper.style.display = '';
-        empty.style.display   = 'none';
-        return;
-    }
-
-    wrapper.style.display = 'none';
-    empty.style.display   = 'block';
-    spinner.style.display = state === 'loading' ? 'block' : 'none';
-    text.textContent      = message || '';
+// ---- Mostra il messaggio di tabella vuota (dentro la tabella da tablet in su;
+//      su mobile la tabella viene nascosta via CSS e si vede solo il messaggio a parte) ----
+function showEmptyTable(message) {
+    document.getElementById('tableWrapper').classList.add('table-empty');
+    document.getElementById('tableBody').innerHTML = `
+        <tr><td colspan="7">
+            <div class="empty-state">
+                <p>${esc(message)}</p>
+            </div>
+        </td></tr>`;
+    document.getElementById('tableEmptyMobileText').textContent = message;
+    document.getElementById('paginationBar').innerHTML = '';
 }
 
 // ---- Render tabella ----
@@ -216,18 +213,16 @@ function renderTable() {
     const slice = filteredData.slice(start, start + PAGE_SIZE);
 
     if (!filtersActive) {
-        showTableState('empty', 'Seleziona un anno o digita il nome del ragazzo per visualizzare i dati');
-        document.getElementById('paginationBar').innerHTML = '';
+        showEmptyTable('Seleziona un anno o digita il nome del ragazzo per visualizzare i dati');
         return;
     }
 
     if (filteredData.length === 0) {
-        showTableState('empty', 'Nessuna iscrizione trovata');
-        document.getElementById('paginationBar').innerHTML = '';
+        showEmptyTable('Nessuna iscrizione trovata');
         return;
     }
 
-    showTableState('table');
+    document.getElementById('tableWrapper').classList.remove('table-empty');
 
     tbody.innerHTML = slice.map(r => {
         const b = r.bambino  || {};
