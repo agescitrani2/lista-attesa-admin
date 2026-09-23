@@ -9,11 +9,11 @@ let currentPage    = 1;
 const PAGE_SIZE    = 20;
 let sortField      = 'created_at';
 let sortAsc        = false;
-let currentEditId  = null;
 let currentDetailId= null;
 let deleteTargetId = null;
 let importRows     = [];
 let unsubscribe    = null;
+let filtersActive  = false;
 
 // ---- Login ----
 function doLogin() {
@@ -25,7 +25,7 @@ function doLogin() {
         document.getElementById('app').style.flexDirection  = 'column';
         startRealtimeListener();
     } else {
-        err.textContent = '❌ Password errata. Riprova.';
+        err.textContent = 'Password errata. Riprova.';
         document.getElementById('loginPass').classList.add('error');
         setTimeout(() => {
             err.textContent = '';
@@ -46,17 +46,6 @@ function doLogout() {
     allData = []; filteredData = [];
 }
 
-// ---- Sidebar (mobile) ----
-function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('open');
-    document.getElementById('sidebarOverlay').classList.toggle('open');
-}
-
-function closeSidebar() {
-    document.getElementById('sidebar').classList.remove('open');
-    document.getElementById('sidebarOverlay').classList.remove('open');
-}
-
 // ---- Navigazione pagine ----
 function showPage(name) {
     document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
@@ -64,20 +53,18 @@ function showPage(name) {
     document.getElementById(`page-${name}`).style.display = 'block';
     const navBtn = document.getElementById(`nav-${name}`);
     if (navBtn) navBtn.classList.add('active');
-    closeSidebar();
 }
 
 // ---- Listener realtime Firestore ----
 function startRealtimeListener() {
     document.getElementById('tableBody').innerHTML =
-        '<tr class="loading-row"><td colspan="9"><div class="spinner"></div></td></tr>';
+        '<tr class="loading-row"><td colspan="7"><div class="spinner"></div></td></tr>';
 
     unsubscribe = db.collection('lista_attesa')
         .orderBy('created_at', 'desc')
         .onSnapshot(snapshot => {
             allData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             applyFilters();
-            updateBadges();
             populateYearFilter();
         }, err => {
             console.error(err);
@@ -88,16 +75,23 @@ function startRealtimeListener() {
 // ---- Filtri e ricerca ----
 function applyFilters() {
     const q      = document.getElementById('searchInput').value.toLowerCase();
-    const stato  = document.getElementById('filterStato').value;
     const anno   = document.getElementById('filterAnno').value;
+
+    filtersActive = !!(q || anno);
+    currentPage = 1;
+
+    if (!filtersActive) {
+        filteredData = [];
+        renderTable();
+        return;
+    }
 
     filteredData = allData.filter(r => {
         const b = r.bambino || {};
         const g = r.genitore1 || {};
-        const text = `${b.nome} ${b.cognome} ${b.codice_fiscale} ${g.email} ${g.nome} ${g.cognome} ${r.registrationId || ''}`.toLowerCase();
+        const text = `${b.nome} ${b.cognome} ${b.codice_fiscale} ${g.email} ${g.nome} ${g.cognome}`.toLowerCase();
 
         if (q && !text.includes(q)) return false;
-        if (stato && r.stato !== stato) return false;
         if (anno) {
             const y = (b.data_nascita || '').substring(0, 4);
             if (y !== anno) return false;
@@ -105,8 +99,16 @@ function applyFilters() {
         return true;
     });
 
-    // Ordinamento
+    // Ordinamento: 1) chi ha parenti già in AGESCI, 2) parrocchia S. Maria delle Grazie, 3) data iscrizione
     filteredData.sort((a, b) => {
+        const pa = hasAgesciSibling(a) ? 0 : 1;
+        const pb = hasAgesciSibling(b) ? 0 : 1;
+        if (pa !== pb) return pa - pb;
+
+        const qa = isParrocchiaSMG(a) ? 0 : 1;
+        const qb = isParrocchiaSMG(b) ? 0 : 1;
+        if (qa !== qb) return qa - qb;
+
         let va = getNestedVal(a, sortField) || '';
         let vb = getNestedVal(b, sortField) || '';
         if (va && vb && typeof va === 'object' && va.seconds) {
@@ -117,15 +119,54 @@ function applyFilters() {
         return 0;
     });
 
-    currentPage = 1;
     renderTable();
-    updateSubCount();
-    updateDashboard();
+}
+
+// ---- Rileva se il ragazzo ha già fratelli/sorelle in AGESCI ----
+// (dal campo strutturato, oppure da un riferimento trovato nelle note admin
+//  per i vecchi record importati dove l'informazione era scritta solo in nota)
+function hasAgesciSibling(r) {
+    if (r.fratelli_agesci?.presente) return true;
+    const note = (r.note_admin || '').toLowerCase();
+    return note.includes('fratel') || note.includes('sorell') || note.includes('parente nel gruppo');
+}
+
+// ---- Rileva se la parrocchia è Santa Maria delle Grazie (anche abbreviata) ----
+function isParrocchiaSMG(r) {
+    const p = (r.parrocchia || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (!p) return false;
+    return p === 'smg'
+        || p === 'smdg'
+        || p.includes('santamariadellegrazie')
+        || p.includes('smdellegrazie')
+        || (p.startsWith('s') && p.includes('mariadellegrazie'));
+}
+
+// ---- Rileva anomalie nei dati dell'iscrizione ----
+function getAnomalie(r) {
+    const b  = r.bambino  || {};
+    const g1 = r.genitore1|| {};
+    const pr = r.privacy  || {};
+    const anomalie = [];
+
+    if (!g1.email && !g1.telefono) {
+        anomalie.push('Nessun recapito per il genitore 1: manca sia email che telefono.');
+    }
+    if (!b.codice_fiscale || b.codice_fiscale.length !== 16) {
+        anomalie.push('Codice fiscale del ragazzo/a mancante o non valido.');
+    }
+    if (!b.data_nascita) {
+        anomalie.push('Data di nascita del ragazzo/a mancante.');
+    }
+    if (!pr.consenso) {
+        anomalie.push('Consenso privacy non dato.');
+    }
+
+    return anomalie;
 }
 
 function resetFilters() {
     document.getElementById('searchInput').value    = '';
-    document.getElementById('filterStato').value    = '';
     document.getElementById('filterAnno').value     = '';
     applyFilters();
 }
@@ -156,11 +197,21 @@ function renderTable() {
     const start = (currentPage - 1) * PAGE_SIZE;
     const slice = filteredData.slice(start, start + PAGE_SIZE);
 
+    if (!filtersActive) {
+        tbody.innerHTML = `
+            <tr><td colspan="7">
+                <div class="empty-state">
+                    <p>Seleziona un anno o digita il nome del ragazzo per visualizzare i dati</p>
+                </div>
+            </td></tr>`;
+        document.getElementById('paginationBar').innerHTML = '';
+        return;
+    }
+
     if (filteredData.length === 0) {
         tbody.innerHTML = `
-            <tr><td colspan="9">
+            <tr><td colspan="7">
                 <div class="empty-state">
-                    <div class="empty-icon">📭</div>
                     <p>Nessuna iscrizione trovata</p>
                 </div>
             </td></tr>`;
@@ -172,41 +223,27 @@ function renderTable() {
         const b = r.bambino  || {};
         const g = r.genitore1|| {};
         const g2 = r.genitore2|| {};
-        const dataNascita = formatDate(b.data_nascita);
-        const dataIscr    = formatTimestamp(r.created_at);
+        const anno = (b.data_nascita || '').substring(0, 4) || '—';
+        const dataIscr = formatTimestamp(r.created_at);
         const tel = [g.telefono, g2.telefono].filter(Boolean).join(' / ');
-        const fr = r.fratelli_agesci || {};
-        const noteDefault = r.note_admin || (fr.presente ? `Parente nel gruppo: ${fr.nome || ''}`.trim() : '');
+        const priorita = hasAgesciSibling(r)
+            ? '<span class="priority-badge" title="Ha già un fratello/sorella in AGESCI">Parente negli scout</span>' : '';
 
         return `
         <tr>
-            <td style="font-family:monospace;font-size:0.75rem;color:#5A2D9E">${esc(r.registrationId || r.id)}</td>
-            <td class="td-name">${esc(b.cognome || '—')} ${esc(b.nome || '')}</td>
-            <td class="td-date">${dataNascita}</td>
+            <td class="td-name">${esc(b.nome || '—')}</td>
+            <td class="td-name">${esc(b.cognome || '—')}${priorita}</td>
+            <td class="td-date">${anno}</td>
             <td class="td-date">${dataIscr}</td>
             <td>${esc(r.parrocchia || '—')}</td>
             <td style="font-size:0.82rem">${esc(tel || '—')}</td>
             <td>
-                <select class="filter-select" style="padding:4px 6px;font-size:0.75rem"
-                        onchange="updateStato('${r.id}',this.value)">
-                    <option value="in_attesa"   ${r.stato==='in_attesa'   ?'selected':''}>⏳ In attesa</option>
-                    <option value="contattato"  ${r.stato==='contattato'  ?'selected':''}>📞 Contattato</option>
-                    <option value="iscritto"    ${r.stato==='iscritto'    ?'selected':''}>✅ Iscritto</option>
-                    <option value="rifiutato"   ${r.stato==='rifiutato'   ?'selected':''}>❌ Rifiutato</option>
-                </select>
-            </td>
-            <td>
-                <textarea class="note-cell" rows="2"
-                    onblur="saveNote('${r.id}', this)"
-                    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.blur()}"
-                    placeholder="…">${esc(noteDefault)}</textarea>
-            </td>
-            <td>
-                <div class="action-btns">
-                    <button class="action-btn view"   onclick="viewDetail('${r.id}')">👁</button>
-                    <button class="action-btn edit"   onclick="openEdit('${r.id}')">✏️</button>
-                    <button class="action-btn delete" onclick="askDelete('${r.id}')">🗑</button>
-                </div>
+                <button class="action-icon-btn" title="Apri scheda" onclick="viewDetail('${r.id}')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 3h7v7"/><path d="M10 14 21 3"/>
+                        <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>
+                    </svg>
+                </button>
             </td>
         </tr>`;
     }).join('');
@@ -240,31 +277,7 @@ function goPage(n) {
     document.querySelector('.main-content').scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// ---- Update stato direttamente dalla tabella ----
-async function updateStato(id, stato) {
-    try {
-        await db.collection('lista_attesa').doc(id).update({ stato });
-        showToast('Stato aggiornato ✓');
-    } catch (e) {
-        showToast('Errore: ' + e.message, true);
-    }
-}
-
-// ---- Salva nota inline ----
-async function saveNote(id, el) {
-    const nota = el.value.trim();
-    const r = allData.find(x => x.id === id);
-    if (!r || nota === (r.note_admin || '')) return;
-    try {
-        await db.collection('lista_attesa').doc(id).update({ note_admin: nota });
-        el.classList.add('note-saved');
-        setTimeout(() => el.classList.remove('note-saved'), 1000);
-    } catch (e) {
-        showToast('Errore salvataggio nota: ' + e.message, true);
-    }
-}
-
-// ---- Visualizza dettaglio ----
+// ---- Visualizza / modifica dettaglio (scheda anagrafica a tab) ----
 function viewDetail(id) {
     currentDetailId = id;
     const r = allData.find(x => x.id === id);
@@ -276,156 +289,268 @@ function viewDetail(id) {
     const fr = r.fratelli_agesci || {};
     const pr = r.privacy  || {};
 
-    document.getElementById('detailModalTitle').textContent =
-        `👤 ${b.nome || ''} ${b.cognome || ''}`;
+    document.getElementById('detailModalTitle').textContent = `${b.nome || ''} ${b.cognome || ''}`.trim() || 'Dettaglio iscrizione';
+    document.getElementById('detailModalAvatar').textContent = (b.nome || '?').trim().charAt(0).toUpperCase();
+
+    const anomalie = getAnomalie(r);
+    document.getElementById('detailModalAlert').innerHTML = anomalie.length ? `
+        <div class="alert-box alert-red">
+            <strong>Anomalie rilevate:</strong>
+            <ul>${anomalie.map(a => `<li>${esc(a)}</li>`).join('')}</ul>
+        </div>` : '';
 
     document.getElementById('detailModalBody').innerHTML = `
-        <div class="detail-section">
-            <div class="detail-section-title">🧒 Ragazzo/a</div>
-            <dl class="detail-grid">
-                <dt>Nome</dt><dd>${esc(b.nome||'—')}</dd>
-                <dt>Cognome</dt><dd>${esc(b.cognome||'—')}</dd>
-                <dt>Nato/a a</dt><dd>${esc(b.luogo_nascita||'—')}</dd>
-                <dt>Data nascita</dt><dd>${formatDate(b.data_nascita)}</dd>
-                <dt>Codice fiscale</dt><dd>${esc(b.codice_fiscale||'—')}</dd>
-                <dt>Residente a</dt><dd>${esc(b.residente_a||'—')}</dd>
-                <dt>Via/Piazza</dt><dd>${esc(b.via||'—')}</dd>
-                <dt>Parrocchia</dt><dd>${esc(r.parrocchia||'—')}</dd>
-            </dl>
+        <div class="modal-tab-panel active" data-tab="ragazzo">
+            <div class="edit-grid">
+                <div class="form-group">
+                    <label>Nome</label>
+                    <input id="d_bNome" value="${esc(b.nome||'')}">
+                </div>
+                <div class="form-group">
+                    <label>Cognome</label>
+                    <input id="d_bCognome" value="${esc(b.cognome||'')}">
+                </div>
+                <div class="form-group">
+                    <label>Luogo di nascita</label>
+                    <input id="d_bLuogo" value="${esc(b.luogo_nascita||'')}">
+                </div>
+                <div class="form-group">
+                    <label>Data di nascita</label>
+                    <input type="date" id="d_bData" value="${b.data_nascita||''}">
+                </div>
+                <div class="form-group">
+                    <label>Codice fiscale</label>
+                    <input id="d_bCF" value="${esc(b.codice_fiscale||'')}" maxlength="16" style="text-transform:uppercase">
+                </div>
+                <div class="form-group">
+                    <label>Residente a</label>
+                    <input id="d_bResidente" value="${esc(b.residente_a||'')}">
+                </div>
+                <div class="form-group">
+                    <label>Via/Piazza</label>
+                    <input id="d_bVia" value="${esc(b.via||'')}">
+                </div>
+                <div class="form-group">
+                    <label>Parrocchia</label>
+                    <input id="d_parrocchia" value="${esc(r.parrocchia||'')}">
+                </div>
+                <div class="form-group">
+                    <label>Fratelli/Sorelle AGESCI</label>
+                    <select id="d_frPresente">
+                        <option value="no" ${!fr.presente?'selected':''}>No</option>
+                        <option value="si" ${fr.presente?'selected':''}>Sì</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Nome fratello/sorella</label>
+                    <input id="d_frNome" value="${esc(fr.nome||'')}">
+                </div>
+                ${!fr.presente && hasAgesciSibling(r) ? `<div class="form-group full"><div class="alert-box alert-amber">Nelle note admin risulta un riferimento a un fratello/sorella già in AGESCI: verifica e aggiorna questo campo.</div></div>` : ''}
+            </div>
         </div>
-        ${fr.presente ? `<div class="detail-section"><div class="detail-section-title">👨‍👩‍👧 Fratelli/Sorelle AGESCI</div><p style="font-size:0.84rem">Sì — ${esc(fr.nome||'')}</p></div>` : ''}
-        <div class="detail-section">
-            <div class="detail-section-title">👤 Genitore 1</div>
-            <dl class="detail-grid">
-                <dt>Nome</dt><dd>${esc(g1.nome||'—')}</dd>
-                <dt>Cognome</dt><dd>${esc(g1.cognome||'—')}</dd>
-                <dt>Email</dt><dd>${esc(g1.email||'—')}</dd>
-                <dt>Telefono</dt><dd>${esc(g1.telefono||'—')}</dd>
-                <dt>Nato/a a</dt><dd>${esc(g1.luogo_nascita||'—')}</dd>
-                <dt>Data nascita</dt><dd>${formatDate(g1.data_nascita)}</dd>
-                <dt>Codice fiscale</dt><dd>${esc(g1.codice_fiscale||'—')}</dd>
-                <dt>Indirizzo</dt><dd>${esc(g1.via||'')} ${esc(g1.numero||'')} — ${esc(g1.citta||'')} (${esc(g1.provincia||'')}) ${esc(g1.cap||'')}</dd>
-            </dl>
+
+        <div class="modal-tab-panel" data-tab="genitori">
+            <div class="detail-section-title" style="margin-bottom:10px">Genitore 1</div>
+            <div class="edit-grid">
+                <div class="form-group"><label>Nome</label><input id="d_g1Nome" value="${esc(g1.nome||'')}"></div>
+                <div class="form-group"><label>Cognome</label><input id="d_g1Cognome" value="${esc(g1.cognome||'')}"></div>
+                <div class="form-group"><label>Email</label><input type="email" id="d_g1Email" value="${esc(g1.email||'')}"></div>
+                <div class="form-group"><label>Telefono</label><input id="d_g1Tel" value="${esc(g1.telefono||'')}"></div>
+                <div class="form-group"><label>Luogo di nascita</label><input id="d_g1Luogo" value="${esc(g1.luogo_nascita||'')}"></div>
+                <div class="form-group"><label>Data di nascita</label><input type="date" id="d_g1Data" value="${g1.data_nascita||''}"></div>
+                <div class="form-group"><label>Codice fiscale</label><input id="d_g1CF" value="${esc(g1.codice_fiscale||'')}" maxlength="16" style="text-transform:uppercase"></div>
+                <div class="form-group"><label>Via</label><input id="d_g1Via" value="${esc(g1.via||'')}"></div>
+                <div class="form-group"><label>Numero</label><input id="d_g1Numero" value="${esc(g1.numero||'')}"></div>
+                <div class="form-group"><label>Città</label><input id="d_g1Citta" value="${esc(g1.citta||'')}"></div>
+                <div class="form-group"><label>Provincia</label><input id="d_g1Provincia" value="${esc(g1.provincia||'')}" maxlength="2" style="text-transform:uppercase"></div>
+                <div class="form-group"><label>CAP</label><input id="d_g1Cap" value="${esc(g1.cap||'')}"></div>
+            </div>
+
+            <div class="detail-section-title" style="margin:18px 0 10px">Genitore 2</div>
+            <div class="edit-grid">
+                <div class="form-group"><label>Nome</label><input id="d_g2Nome" value="${esc(g2?.nome||'')}"></div>
+                <div class="form-group"><label>Cognome</label><input id="d_g2Cognome" value="${esc(g2?.cognome||'')}"></div>
+                <div class="form-group"><label>Email</label><input type="email" id="d_g2Email" value="${esc(g2?.email||'')}"></div>
+                <div class="form-group"><label>Telefono</label><input id="d_g2Tel" value="${esc(g2?.telefono||'')}"></div>
+                <div class="form-group"><label>Luogo di nascita</label><input id="d_g2Luogo" value="${esc(g2?.luogo_nascita||'')}"></div>
+                <div class="form-group"><label>Data di nascita</label><input type="date" id="d_g2Data" value="${g2?.data_nascita||''}"></div>
+                <div class="form-group"><label>Codice fiscale</label><input id="d_g2CF" value="${esc(g2?.codice_fiscale||'')}" maxlength="16" style="text-transform:uppercase"></div>
+                <div class="form-group"><label>Via</label><input id="d_g2Via" value="${esc(g2?.via||'')}"></div>
+                <div class="form-group"><label>Numero</label><input id="d_g2Numero" value="${esc(g2?.numero||'')}"></div>
+                <div class="form-group"><label>Città</label><input id="d_g2Citta" value="${esc(g2?.citta||'')}"></div>
+                <div class="form-group"><label>Provincia</label><input id="d_g2Provincia" value="${esc(g2?.provincia||'')}" maxlength="2" style="text-transform:uppercase"></div>
+                <div class="form-group"><label>CAP</label><input id="d_g2Cap" value="${esc(g2?.cap||'')}"></div>
+            </div>
         </div>
-        ${g2 ? `
-        <div class="detail-section">
-            <div class="detail-section-title">👤 Genitore 2</div>
-            <dl class="detail-grid">
-                <dt>Nome</dt><dd>${esc(g2.nome||'—')}</dd>
-                <dt>Cognome</dt><dd>${esc(g2.cognome||'—')}</dd>
-                <dt>Email</dt><dd>${esc(g2.email||'—')}</dd>
-                <dt>Telefono</dt><dd>${esc(g2.telefono||'—')}</dd>
-            </dl>
-        </div>` : ''}
-        ${r.motivazione ? `<div class="detail-section"><div class="detail-section-title">💬 Motivazione</div><p style="font-size:0.84rem;color:#555">${esc(r.motivazione)}</p></div>` : ''}
-        ${r.hobby ? `<div class="detail-section"><div class="detail-section-title">🎯 Hobby</div><p style="font-size:0.84rem;color:#555">${esc(r.hobby)}</p></div>` : ''}
-        ${r.altre_info ? `<div class="detail-section"><div class="detail-section-title">📌 Altre info</div><p style="font-size:0.84rem;color:#555">${esc(r.altre_info)}</p></div>` : ''}
-        <div class="detail-section">
-            <div class="detail-section-title">🔒 Privacy & Stato</div>
-            <dl class="detail-grid">
-                <dt>Consenso</dt><dd>${pr.consenso ? '✅ Dato' : '❌ Negato'}</dd>
-                <dt>Data domanda</dt><dd>${pr.data_presentazione || formatDate(r.created_at?.toDate?.()?.toISOString?.()?.split('T')[0])}</dd>
-                <dt>Stato</dt><dd>${badgeHtml(r.stato||'in_attesa')}</dd>
-                <dt>ID</dt><dd style="font-family:monospace;font-size:0.78rem">${r.registrationId||r.id}</dd>
-            </dl>
+
+        <div class="modal-tab-panel" data-tab="iscrizione">
+            <div class="edit-grid">
+                <div class="form-group full">
+                    <label>Motivazione</label>
+                    <textarea id="d_motivazione" rows="2">${esc(r.motivazione||'')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Hobby</label>
+                    <input id="d_hobby" value="${esc(r.hobby||'')}">
+                </div>
+                <div class="form-group full">
+                    <label>Altre info</label>
+                    <textarea id="d_altreInfo" rows="2">${esc(r.altre_info||'')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Consenso privacy</label>
+                    <select id="d_privacyConsenso">
+                        <option value="no" ${!pr.consenso?'selected':''}>No</option>
+                        <option value="si" ${pr.consenso?'selected':''}>Sì</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Data domanda</label>
+                    <input type="date" id="d_privacyData" value="${pr.data_presentazione||''}">
+                </div>
+                <div class="form-group">
+                    <label>Luogo domanda</label>
+                    <input id="d_privacyLuogo" value="${esc(pr.luogo||'')}">
+                </div>
+                <div class="form-group">
+                    <label>Stato</label>
+                    <select id="d_stato">
+                        <option value="in_attesa"   ${r.stato==='in_attesa'   ?'selected':''}>In attesa</option>
+                        <option value="contattato"  ${r.stato==='contattato'  ?'selected':''}>Contattato</option>
+                        <option value="iscritto"    ${r.stato==='iscritto'    ?'selected':''}>Iscritto</option>
+                        <option value="rifiutato"   ${r.stato==='rifiutato'   ?'selected':''}>Rifiutato</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Data iscrizione</label>
+                    <input value="${formatTimestamp(r.created_at)}" disabled data-readonly style="background:#F5F5F5;color:#888">
+                </div>
+                <div class="form-group full">
+                    <label>Note admin</label>
+                    <textarea id="d_note" rows="3">${esc(r.note_admin||'')}</textarea>
+                </div>
+            </div>
         </div>
-        ${r.note_admin ? `<div class="detail-section"><div class="detail-section-title">📝 Note admin</div><p style="font-size:0.84rem;color:#555">${esc(r.note_admin)}</p></div>` : ''}
     `;
 
+    document.querySelectorAll('#detailModalBody input, #detailModalBody select, #detailModalBody textarea')
+        .forEach(el => { if (!el.hasAttribute('data-readonly')) el.disabled = true; });
+    resetDetailFooter();
+
+    switchDetailTab('ragazzo');
     openModal('detailModal');
 }
 
-function openEditFromDetail() {
+// ---- Passa il popup di dettaglio in modalità modifica ----
+function enableDetailEdit() {
+    document.querySelectorAll('#detailModalBody input, #detailModalBody select, #detailModalBody textarea')
+        .forEach(el => { if (!el.hasAttribute('data-readonly')) el.disabled = false; });
+
+    const secondary = document.getElementById('detailSecondaryBtn');
+    const primary    = document.getElementById('detailPrimaryBtn');
+    secondary.textContent = 'Annulla';
+    secondary.onclick = () => viewDetail(currentDetailId);
+    primary.textContent = 'Salva modifiche';
+    primary.onclick = saveDetail;
+}
+
+function resetDetailFooter() {
+    const secondary = document.getElementById('detailSecondaryBtn');
+    const primary    = document.getElementById('detailPrimaryBtn');
+    secondary.textContent = 'Chiudi';
+    secondary.onclick = () => closeModal('detailModal');
+    primary.textContent = 'Modifica';
+    primary.onclick = enableDetailEdit;
+}
+
+function switchDetailTab(tab) {
+    document.querySelectorAll('#detailModal .modal-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('#detailModal .modal-tab-panel').forEach(p => {
+        const isActive = p.dataset.tab === tab;
+        p.classList.toggle('active', isActive);
+        if (isActive) p.scrollTop = 0;
+    });
+    document.getElementById('detailModal').scrollTop = 0;
+}
+
+function askDeleteFromDetail() {
     closeModal('detailModal');
-    openEdit(currentDetailId);
+    askDelete(currentDetailId);
 }
 
-// ---- Modifica iscrizione ----
-function openEdit(id) {
-    currentEditId = id;
-    const r = allData.find(x => x.id === id);
-    if (!r) return;
-    const b  = r.bambino  || {};
-    const g1 = r.genitore1|| {};
-    const g2 = r.genitore2|| {};
+// ---- Salva modifiche dal popup di dettaglio ----
+async function saveDetail() {
+    if (!currentDetailId) return;
 
-    document.getElementById('editModalBody').innerHTML = `
-        <h4 style="font-size:0.82rem;color:#888;margin-bottom:12px">Modifica dati principali</h4>
-        <div class="edit-grid">
-            <div class="form-group">
-                <label>Nome bambino</label>
-                <input id="e_bNome" value="${esc(b.nome||'')}">
-            </div>
-            <div class="form-group">
-                <label>Cognome bambino</label>
-                <input id="e_bCognome" value="${esc(b.cognome||'')}">
-            </div>
-            <div class="form-group">
-                <label>Data nascita bambino</label>
-                <input type="date" id="e_bData" value="${b.data_nascita||''}">
-            </div>
-            <div class="form-group">
-                <label>Luogo nascita</label>
-                <input id="e_bLuogo" value="${esc(b.luogo_nascita||'')}">
-            </div>
-            <div class="form-group">
-                <label>Codice fiscale bambino</label>
-                <input id="e_bCF" value="${esc(b.codice_fiscale||'')}" maxlength="16" style="text-transform:uppercase">
-            </div>
-            <div class="form-group">
-                <label>Parrocchia</label>
-                <input id="e_parrocchia" value="${esc(r.parrocchia||'')}">
-            </div>
-            <div class="form-group">
-                <label>Email genitore 1</label>
-                <input type="email" id="e_g1Email" value="${esc(g1.email||'')}">
-            </div>
-            <div class="form-group">
-                <label>Telefono genitore 1</label>
-                <input id="e_g1Tel" value="${esc(g1.telefono||'')}">
-            </div>
-            <div class="form-group">
-                <label>Stato</label>
-                <select id="e_stato">
-                    <option value="in_attesa"   ${r.stato==='in_attesa'?'selected':''}>⏳ In attesa</option>
-                    <option value="contattato"  ${r.stato==='contattato'?'selected':''}>📞 Contattato</option>
-                    <option value="iscritto"    ${r.stato==='iscritto'?'selected':''}>✅ Iscritto</option>
-                    <option value="rifiutato"   ${r.stato==='rifiutato'?'selected':''}>❌ Rifiutato</option>
-                </select>
-            </div>
-            <div class="form-group full">
-                <label>Note admin</label>
-                <textarea id="e_note" rows="3">${esc(r.note_admin||'')}</textarea>
-            </div>
-        </div>
-    `;
-    openModal('editModal');
-}
-
-async function saveEdit() {
-    if (!currentEditId) return;
-    const r = allData.find(x => x.id === currentEditId);
-    if (!r) return;
+    const v = id => document.getElementById(id).value.trim();
+    const g2Nome = v('d_g2Nome'), g2Cognome = v('d_g2Cognome'), g2Email = v('d_g2Email'), g2Tel = v('d_g2Tel');
+    const g2Luogo = v('d_g2Luogo'), g2Data = v('d_g2Data'), g2CF = v('d_g2CF'),
+          g2Via = v('d_g2Via'), g2Numero = v('d_g2Numero'), g2Citta = v('d_g2Citta'),
+          g2Provincia = v('d_g2Provincia'), g2Cap = v('d_g2Cap');
+    const genitore2 = (g2Nome || g2Cognome || g2Email || g2Tel) ? {
+        nome: g2Nome, cognome: g2Cognome, email: g2Email.toLowerCase(), telefono: g2Tel,
+        luogo_nascita: g2Luogo, data_nascita: g2Data, codice_fiscale: g2CF.toUpperCase(),
+        via: g2Via, numero: g2Numero, citta: g2Citta, provincia: g2Provincia.toUpperCase(), cap: g2Cap
+    } : null;
 
     const update = {
-        'bambino.nome':          document.getElementById('e_bNome').value.trim(),
-        'bambino.cognome':       document.getElementById('e_bCognome').value.trim(),
-        'bambino.data_nascita':  document.getElementById('e_bData').value,
-        'bambino.luogo_nascita': document.getElementById('e_bLuogo').value.trim(),
-        'bambino.codice_fiscale':document.getElementById('e_bCF').value.trim().toUpperCase(),
-        'parrocchia':            document.getElementById('e_parrocchia').value.trim(),
-        'genitore1.email':       document.getElementById('e_g1Email').value.trim().toLowerCase(),
-        'genitore1.telefono':    document.getElementById('e_g1Tel').value.trim(),
-        'stato':                 document.getElementById('e_stato').value,
-        'note_admin':            document.getElementById('e_note').value.trim(),
+        'bambino.nome':             v('d_bNome'),
+        'bambino.cognome':          v('d_bCognome'),
+        'bambino.luogo_nascita':    v('d_bLuogo'),
+        'bambino.data_nascita':     v('d_bData'),
+        'bambino.codice_fiscale':   v('d_bCF').toUpperCase(),
+        'bambino.residente_a':      v('d_bResidente'),
+        'bambino.via':              v('d_bVia'),
+        'parrocchia':               v('d_parrocchia'),
+        'fratelli_agesci.presente': document.getElementById('d_frPresente').value === 'si',
+        'fratelli_agesci.nome':     v('d_frNome'),
+        'genitore1.nome':           v('d_g1Nome'),
+        'genitore1.cognome':        v('d_g1Cognome'),
+        'genitore1.email':          v('d_g1Email').toLowerCase(),
+        'genitore1.telefono':       v('d_g1Tel'),
+        'genitore1.luogo_nascita':  v('d_g1Luogo'),
+        'genitore1.data_nascita':   v('d_g1Data'),
+        'genitore1.codice_fiscale': v('d_g1CF').toUpperCase(),
+        'genitore1.via':            v('d_g1Via'),
+        'genitore1.numero':         v('d_g1Numero'),
+        'genitore1.citta':          v('d_g1Citta'),
+        'genitore1.provincia':      v('d_g1Provincia').toUpperCase(),
+        'genitore1.cap':            v('d_g1Cap'),
+        'genitore2':                genitore2,
+        'motivazione':              v('d_motivazione'),
+        'hobby':                    v('d_hobby'),
+        'altre_info':               v('d_altreInfo'),
+        'privacy.consenso':         document.getElementById('d_privacyConsenso').value === 'si',
+        'privacy.data_presentazione': v('d_privacyData'),
+        'privacy.luogo':            v('d_privacyLuogo'),
+        'stato':                    document.getElementById('d_stato').value,
+        'note_admin':               v('d_note'),
     };
 
     try {
-        await db.collection('lista_attesa').doc(currentEditId).update(update);
-        closeModal('editModal');
-        showToast('Modifiche salvate ✓');
+        await db.collection('lista_attesa').doc(currentDetailId).update(update);
+
+        const r = allData.find(x => x.id === currentDetailId);
+        if (r) applyDotUpdate(r, update);
+        applyFilters();
+
+        closeModal('detailModal');
+        showToast('Modifiche salvate');
     } catch (e) {
         showToast('Errore: ' + e.message, true);
+    }
+}
+
+// ---- Applica un aggiornamento con chiavi puntate (es. 'bambino.nome') a un oggetto annidato ----
+function applyDotUpdate(obj, update) {
+    for (const [key, value] of Object.entries(update)) {
+        const parts = key.split('.');
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i++) {
+            if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] === null) cur[parts[i]] = {};
+            cur = cur[parts[i]];
+        }
+        cur[parts[parts.length - 1]] = value;
     }
 }
 
@@ -457,29 +582,13 @@ function exportAll() {
         return;
     }
 
-    const tuttiICampi = document.getElementById('exportAllFields').checked;
-
     const rows = filteredData.map(r => {
         const b  = r.bambino  || {};
         const g1 = r.genitore1|| {};
         const g2 = r.genitore2|| {};
         const pr = r.privacy  || {};
-        const tel = [g1.telefono, g2.telefono].filter(Boolean).join(' / ');
-
-        if (!tuttiICampi) {
-            return {
-                'Codice':             r.registrationId || r.id,
-                'Cognome e Nome':     `${b.cognome||''} ${b.nome||''}`.trim(),
-                'Data nascita':       formatDate(b.data_nascita),
-                'Data iscrizione':    formatTimestamp(r.created_at),
-                'Parrocchia':         r.parrocchia    || '',
-                'Telefono':           tel,
-                'Stato':              r.stato         || 'in_attesa',
-            };
-        }
 
         return {
-            'ID':                     r.registrationId || r.id,
             'Cognome bambino':        b.cognome || '',
             'Nome bambino':           b.nome    || '',
             'Data nascita':           b.data_nascita  || '',
@@ -528,7 +637,7 @@ function exportAll() {
 
     const date = new Date().toISOString().split('T')[0];
     XLSX.writeFile(wb, `lista_attesa_trani2_${date}.xlsx`);
-    showToast(`Esportate ${rows.length} righe ✓`);
+    showToast(`Esportate ${rows.length} righe`);
 }
 
 // ---- Genera template Excel ----
@@ -557,7 +666,7 @@ function generateTemplate() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Template');
     XLSX.writeFile(wb, 'template_importazione_lista_attesa.xlsx');
-    showToast('Template scaricato ✓');
+    showToast('Template scaricato');
 }
 
 // ---- Import Excel ----
@@ -788,7 +897,6 @@ async function confirmImport() {
         const { _created_at_str, ...campiPuliti } = campi;
 
         const docData = {
-            registrationId: id,
             tipo_genitore:  campiPuliti.genitore2 ? 'entrambi' : 'unico',
             ...campiPuliti,
             imported:   true,
@@ -817,9 +925,9 @@ async function confirmImport() {
 
     const saltate = importParsedData.length - righeValide.length;
     btn.disabled = false;
-    btn.innerHTML = `✅ Importa <span id="importCount">${righeValide.length}</span> righe`;
+    btn.innerHTML = `Importa <span id="importCount">${righeValide.length}</span> righe`;
     cancelImport();
-    showToast(`Importate ${successCount} iscrizioni${saltate ? ` (${saltate} righe vuote saltate)` : ''} ✓`);
+    showToast(`Importate ${successCount} iscrizioni${saltate ? ` (${saltate} righe vuote saltate)` : ''}`);
     showPage('lista');
 }
 
@@ -842,69 +950,7 @@ function normalizeDate(val) {
     return s;
 }
 
-// ---- Dashboard ----
-function updateDashboard() {
-    const total      = allData.length;
-    const attesa     = allData.filter(r => (r.stato||'in_attesa') === 'in_attesa').length;
-    const iscritto   = allData.filter(r => r.stato === 'iscritto').length;
-    const contattato = allData.filter(r => r.stato === 'contattato').length;
-    const rifiutato  = allData.filter(r => r.stato === 'rifiutato').length;
-
-    document.getElementById('statTot').textContent       = total;
-    document.getElementById('statAttesa').textContent    = attesa;
-    document.getElementById('statIscritto').textContent  = iscritto;
-    document.getElementById('statContattato').textContent= contattato;
-    document.getElementById('statRifiutato').textContent = rifiutato;
-
-    // Grafico nascite per anno
-    const byYear = {};
-    allData.forEach(r => {
-        const y = (r.bambino?.data_nascita||'').substring(0, 4);
-        if (y) byYear[y] = (byYear[y]||0) + 1;
-    });
-
-    const sorted = Object.entries(byYear).sort((a,b) => a[0].localeCompare(b[0]));
-    const maxVal = Math.max(...sorted.map(x => x[1]), 1);
-
-    const chart = sorted.map(([year, count]) => {
-        const pct = Math.round((count / maxVal) * 100);
-        return `
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-                <span style="width:40px;font-weight:700;color:#3D1B6B">${year}</span>
-                <div style="flex:1;background:#F0EAF8;border-radius:4px;height:22px;overflow:hidden">
-                    <div style="width:${pct}%;background:#3D1B6B;height:100%;border-radius:4px;
-                                display:flex;align-items:center;padding-left:8px">
-                        <span style="color:#fff;font-size:0.75rem;font-weight:700">${count}</span>
-                    </div>
-                </div>
-            </div>`;
-    }).join('');
-
-    document.getElementById('birthYearChart').innerHTML = chart || '<p style="color:#aaa">Nessun dato disponibile</p>';
-}
-
-// ---- Badge & Helper ----
-function badgeHtml(stato) {
-    const map = {
-        'in_attesa':   ['badge-attesa',     '⏳ In attesa'],
-        'contattato':  ['badge-contattato', '📞 Contattato'],
-        'iscritto':    ['badge-iscritto',   '✅ Iscritto'],
-        'rifiutato':   ['badge-rifiutato',  '❌ Rifiutato'],
-    };
-    const [cls, label] = map[stato] || ['badge-attesa', '⏳ In attesa'];
-    return `<span class="badge ${cls}">${label}</span>`;
-}
-
-function updateBadges() {
-    document.getElementById('badgeTotal').textContent = allData.length;
-}
-
-function updateSubCount() {
-    const n = filteredData.length;
-    document.getElementById('subCount').textContent =
-        n === allData.length ? `${n} iscrizioni totali` : `${n} di ${allData.length} iscrizioni`;
-}
-
+// ---- Helper ----
 function formatDate(dateStr) {
     if (!dateStr) return '—';
     const [y, m, d] = dateStr.split('-');
@@ -964,7 +1010,7 @@ async function confirmClearAll() {
     }
     if (count % 400 !== 0) await batch.commit();
 
-    showToast(`Eliminati ${count} record ✓`);
+    showToast(`Eliminati ${count} record`);
 }
 
 // ---- Toast ----
