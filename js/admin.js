@@ -833,7 +833,9 @@ function buildDocVecchio(row) {
 
 function buildDocNuovo(row) {
     const g = k => (row[k] || row[k.toLowerCase()] || row[Object.keys(row).find(kk => kk.toLowerCase().replace(/\s/g,'_') === k.toLowerCase().replace(/\s/g,'_'))] || '').toString().trim();
+    const dataPresentazione = normalizeDate(g('data_presentazione'));
     return {
+        _created_at_str: dataPresentazione,
         bambino: {
             nome:           g('nome_bambino'),
             cognome:        g('cognome_bambino'),
@@ -869,7 +871,7 @@ function buildDocNuovo(row) {
         altre_info:  g('altre_info'),
         privacy: {
             consenso: g('privacy').toLowerCase() === 'si' || g('privacy').toLowerCase() === 'sì',
-            data_presentazione: normalizeDate(g('data_presentazione')),
+            data_presentazione: dataPresentazione,
             luogo: 'Trani'
         },
         stato:      'in_attesa',
