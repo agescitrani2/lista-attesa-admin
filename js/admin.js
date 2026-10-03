@@ -411,7 +411,7 @@ function viewDetail(id) {
                 </div>
                 <div class="form-group">
                     <label>Data domanda</label>
-                    <input type="date" id="d_privacyData" value="${pr.data_presentazione||''}">
+                    <input type="date" id="d_privacyData" value="${pr.data_presentazione||''}" readonly style="background:#f3f0f8;cursor:not-allowed">
                 </div>
                 <div class="form-group">
                     <label>Luogo domanda</label>
