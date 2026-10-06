@@ -34,8 +34,9 @@ function doLogin() {
     }
 }
 
+// Il logo base64 è incorporato una sola volta (intestazione) e riusato nel login
 document.addEventListener('DOMContentLoaded', () => {
-    startRealtimeListener();
+    document.getElementById('loginLogo').src = document.getElementById('topLogo').src;
 });
 
 function doLogout() {

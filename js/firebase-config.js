@@ -12,4 +12,4 @@ const db = firebase.firestore();
 
 // ---- Password accesso pannello admin ----
 // CAMBIA QUESTA PASSWORD prima di pubblicare!
-const ADMIN_PASSWORD = "Trani2Scout!";
+const ADMIN_PASSWORD = "scout";
