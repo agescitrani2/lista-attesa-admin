@@ -135,13 +135,29 @@ function hasAgesciSibling(r) {
 
 // ---- Rileva se la parrocchia è Santa Maria delle Grazie (anche abbreviata) ----
 function isParrocchiaSMG(r) {
-    const p = (r.parrocchia || '').toLowerCase().replace(/[^a-z]/g, '');
-    if (!p) return false;
-    return p === 'smg'
-        || p === 'smdg'
-        || p.includes('santamariadellegrazie')
-        || p.includes('smdellegrazie')
-        || (p.startsWith('s') && p.includes('mariadellegrazie'));
+    const txt = (r.parrocchia || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const compact = txt.replace(/[^a-z]/g, '');
+    if (!compact) return false;
+    // sigle e forme incollate ("smg", "S.M.G.", "santamariadellegrazie")
+    if (/^(smg|smdg|smdgrazie)$/.test(compact) || /s?m(aria)?(delle|dalle|d)?grazi/.test(compact)) return true;
+    const tokens = txt.split(/[^a-z]+/).filter(Boolean);
+    const near = (w, target, max) => w.length >= 4 && lev(w, target) <= max; // tollera refusi
+    const grazie = tokens.some(w => near(w, 'grazie', 2));
+    // "maria" solo con refusi noti: con la distanza 1 passerebbero "marta" e "mario"
+    const maria  = tokens.some(w => ['maria', 'mari', 'mria', 'marai', 'maira'].includes(w));
+    // niente "del"/"della": "Santa Maria del Carmine" è un'altra parrocchia
+    const delle  = tokens.some(w => ['delle', 'dell', 'dele', 'dalle'].includes(w));
+    // basta "grazie" da sola; "Maria" conta se accompagnata da "delle" (parola mancante)
+    return grazie || (maria && delle);
+}
+
+function lev(a, b) {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++)
+        for (let j = 1; j <= b.length; j++)
+            d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+    return d[a.length][b.length];
 }
 
 // ---- Rileva anomalie nei dati dell'iscrizione ----
